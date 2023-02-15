@@ -17,6 +17,9 @@ from airflow.models import Variable
 
 AIRFLOW_ENVIRONMENT = Variable.get("airflow_environment")
 S3_BUCKET = Variable.get("s3_bucket")
+IAM_ROLE = Variable.get("iam_role")
+EVENT_BUS = Variable.get("event_bus")
+REGION = Variable.get("region")
 
 local_tz = pendulum.timezone("Asia/Kolkata")
 
@@ -26,14 +29,14 @@ def dag_failure_alert(context):
     json_details = {
         "name" : "Dag failed"
     }
-    client = boto3.client('events', region_name = "us-east-1")
+    client = boto3.client('events', region_name = {REGION})
     response = client.put_events(
         Entries = [
             {
                 'Source' : 'airflow',
                 'DetailType' : 'user-preferences',
                 'Detail' : json.dumps(json_details),
-                'EventBusName' : 'american_logistics_poc'
+                'EventBusName' : {EVENT_BUS}
             }
         ]
     )
@@ -254,7 +257,7 @@ tables_and_queries = [
 
 
 @dag(
-    dag_id='al.migration.postgresqltoredshift',
+    dag_id='data.migration.postgresqltoredshift',
     default_args=default_args,
     start_date=datetime(2023, 2, 8, 9, 8),
     schedule_interval='0 * * * *',
@@ -263,7 +266,7 @@ tables_and_queries = [
     max_active_runs=1,
     tags=["postgress", "redshift"]
 )
-def american_logistics_etl():  # move this hooks to respective tasks
+def data_migration_etl():  # move this hooks to respective tasks
     pg_hook = PostgresHook(postgres_conn_id='postgres_localhost')
     s3_hook = S3Hook(aws_conn_id='aws_connection')
     redshift_hook = PostgresHook(
@@ -318,7 +321,7 @@ def american_logistics_etl():  # move this hooks to respective tasks
             filename=f"{table_and_query['source_table_name']}.csv",
 
             key=f"{AIRFLOW_ENVIRONMENT}/{table_and_query['source_table_name']}/{current_time}/{table_and_query['source_table_name']}.csv",
-            bucket_name="american-logistics-migration",
+            bucket_name={S3_BUCKET},
             replace=True
         )
         table_and_query['s3Url'] = f"s3://{S3_BUCKET}/{AIRFLOW_ENVIRONMENT}/{table_and_query['source_table_name']}/{current_time}/"
@@ -332,7 +335,7 @@ def american_logistics_etl():  # move this hooks to respective tasks
             return output
         s3Url = output["s3Url"]
         table_name = output["staged_table_name"]
-        query = f""" copy {table_name} from '{s3Url}' iam_role 'arn:aws:iam::894811220469:role/service-role/AmazonRedshift-CommandsAccessRole-20230212T135939' delimiter ',' csv quote '\"' """
+        query = f""" copy {table_name} from '{s3Url}' iam_role '{IAM_ROLE}' delimiter ',' csv quote '\"' """
         print(query)
 
         redshift_conn = redshift_hook.get_conn()
@@ -380,4 +383,4 @@ def american_logistics_etl():  # move this hooks to respective tasks
     output >> stage_table_output >> final
 
 
-american_logistics_dag = american_logistics_etl()
+data_migration_dag = data_migration_etl()
